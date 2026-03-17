@@ -1,91 +1,114 @@
 #!/bin/bash
 #
-# Daily Briefing Runner Script
-# This script runs the daily briefing and posts to Slack
+# run_daily_briefing.sh - Full daily briefing pipeline
+#
+# Steps:
+#   1. Collect messages from Slack via MCP
+#   2. Summarize using local Ollama
+#   3. Post summary to Slack channel
+#
+# Usage:
+#   ./run_daily_briefing.sh              # normal run
+#   ./run_daily_briefing.sh --no-post    # collect + summarize only, don't post
 #
 
-# Set working directory
-cd /home/YOUR_USER/path/to/mcp-slack-briefing
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+cd "$SCRIPT_DIR"
 
-# Export API key if needed (uncomment and set your key)
-# export ANTHROPIC_API_KEY="your-api-key-here"
-
-# Set date for filename
-DATE=$(date +%Y-%m-%d)
-
-# Run the collection script
-echo "$(date): Running daily briefing collection..."
-poetry run python daily_briefing.py 24 "briefing_${DATE}.txt" false
-
-# Check if collection succeeded
-if [ $? -eq 0 ]; then
-    echo "$(date): Collection completed successfully"
-    echo "$(date): Output saved to briefing_${DATE}.txt"
-
-    # Send Slack DM notification
-    echo "$(date): Sending notification to Slack..."
-    poetry run python - <<'PYTHON_EOF'
-import asyncio, json
-from mcp import ClientSession, StdioServerParameters
-from mcp.client.stdio import stdio_client
-from datetime import datetime
-
-async def send_notification():
-    with open('.mcp.json') as f:
-        config = json.load(f)
-
-    params = StdioServerParameters(
-        command=config['mcpServers']['slack']['command'],
-        args=config['mcpServers']['slack']['args'],
-        env=config['mcpServers']['slack']['env']
-    )
-
-    async with stdio_client(params) as (r, w):
-        async with ClientSession(r, w) as session:
-            await session.initialize()
-
-            # Send DM to user - UPDATE WITH YOUR USER ID
-            date_str = datetime.now().strftime('%B %d, %Y')
-            message = f"""📋 Daily Briefing Ready for Review
-
-Date: {date_str}
-Status: ✅ Collection completed successfully
-
-The daily briefing has been collected from:
-• #your-channel-1
-• #your-channel-2
-• #your-channel-3
-• #your-channel-4
-
-To review and post:
-1. Open Claude Code
-2. Say "Create today's daily briefing"
-3. Review the summary
-4. Approve posting to #your-target-channel
-
-File: briefing_{datetime.now().strftime('%Y-%m-%d')}.txt"""
-
-            await session.call_tool(
-                'send_dm',
-                arguments={
-                    'user_id': 'U0XXXXXXXXX',  # UPDATE WITH YOUR SLACK USER ID
-                    'message': message
-                }
-            )
-            print("DM notification sent successfully")
-
-asyncio.run(send_notification())
-PYTHON_EOF
-
-    if [ $? -eq 0 ]; then
-        echo "$(date): Notification sent successfully"
-    else
-        echo "$(date): Warning: Notification failed (briefing still collected)"
-    fi
-
+# Activate venv
+if [ -f "$SCRIPT_DIR/venv/bin/activate" ]; then
+    source "$SCRIPT_DIR/venv/bin/activate"
 else
-    echo "$(date): Collection failed!"
+    echo "$(date): ERROR: venv not found. Run ./setup.sh first."
     exit 1
 fi
 
-echo "$(date): Daily briefing job completed"
+# S7: Load environment variables from .env
+if [ -f .env ]; then
+    set -a
+    source .env
+    set +a
+else
+    echo "$(date): ERROR: .env not found. Run ./setup.sh first."
+    exit 1
+fi
+
+# Create logs dir
+mkdir -p logs
+
+# Set date for filename
+DATE=$(date +%Y-%m-%d)
+YESTERDAY=$(date -v-1d +%Y-%m-%d 2>/dev/null || date -d "yesterday" +%Y-%m-%d)
+
+BRIEFING_FILE="briefing_${DATE}.txt"
+SUMMARY_FILE="briefing_summary_${DATE}.txt"
+
+echo "$(date): ============================================="
+echo "$(date): Daily Briefing Pipeline Starting"
+echo "$(date): ============================================="
+
+# -------------------------------------------------------
+# Step 1: Collect messages from Slack via MCP
+# -------------------------------------------------------
+echo "$(date): Step 1 - Collecting messages from Slack..."
+
+python daily_briefing.py 24 "$BRIEFING_FILE" false
+
+if [ $? -ne 0 ]; then
+    echo "$(date): ERROR: Message collection failed!"
+    exit 1
+fi
+
+echo "$(date): Collection completed: $BRIEFING_FILE"
+
+# -------------------------------------------------------
+# Step 2: Summarize with local Ollama
+# S6: All AI processing happens locally
+# S8: PII sanitization inside ollama_summarizer.py
+# -------------------------------------------------------
+echo "$(date): Step 2 - Summarizing with local AI..."
+
+# Start Ollama if not running
+if ! curl -s http://localhost:11434/api/tags > /dev/null 2>&1; then
+    echo "$(date): Starting Ollama..."
+    ollama serve &>/dev/null &
+    sleep 5
+fi
+
+# Summarize (daily_briefing.py does this automatically, but run standalone as backup)
+if [ ! -f "$SUMMARY_FILE" ]; then
+    python ollama_summarizer.py "$BRIEFING_FILE" "$SUMMARY_FILE"
+fi
+
+if [ ! -f "$SUMMARY_FILE" ]; then
+    echo "$(date): ERROR: Summarization failed"
+    echo "$(date): Raw briefing saved at $BRIEFING_FILE"
+    exit 1
+fi
+
+echo "$(date): Summary generated: $SUMMARY_FILE"
+
+# -------------------------------------------------------
+# Step 3: Post to Slack
+# S1: Only posts to BRIEFING_CHANNEL_ID
+# S5: Summary posted as thread reply
+# -------------------------------------------------------
+if [ "$1" = "--no-post" ]; then
+    echo "$(date): Skipping Slack posting (--no-post flag)"
+elif [ -z "$BRIEFING_CHANNEL_ID" ]; then
+    echo "$(date): WARNING: BRIEFING_CHANNEL_ID not set. Skipping posting."
+else
+    echo "$(date): Step 3 - Posting to Slack..."
+
+    python post_summary_to_slack.py "$SUMMARY_FILE" "$YESTERDAY" "$DATE" "$BRIEFING_CHANNEL_ID"
+
+    if [ $? -eq 0 ]; then
+        echo "$(date): Briefing posted to Slack"
+    else
+        echo "$(date): WARNING: Posting failed (briefing saved locally)"
+    fi
+fi
+
+echo "$(date): ============================================="
+echo "$(date): Daily Briefing Pipeline Complete"
+echo "$(date): ============================================="

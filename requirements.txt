@@ -1,0 +1,8 @@
+# Core dependencies (from original project)
+mcp>=1.26.0
+requests>=2.32.0
+python-dotenv>=1.0.0
+
+# ADDED: Agentic AI dependencies
+ollama>=0.4.0
+# CHANGED: Removed slack-bolt and slack-sdk — using pure MCP approach instead

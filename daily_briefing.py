@@ -1,10 +1,14 @@
 #!/usr/bin/env python3
 """
 Daily Briefing Generator - Collects important Slack messages from multiple channels.
-Claude Code will then summarize them into a formatted daily briefing.
+
+CHANGED: Summarization is now handled by local Ollama instead of Claude Code.
+This ensures no Slack data leaves the local machine (Safeguard S6).
+Original collection and filtering logic is preserved.
 """
 import asyncio
 import json
+import os
 import sys
 import re
 from datetime import datetime, timedelta
@@ -19,7 +23,10 @@ except ImportError:
     print("Install it with: poetry add mcp")
     sys.exit(1)
 
-# Anthropic not needed - Claude Code will do the summarization!
+# CHANGED: Anthropic/Claude Code no longer needed.
+# Summarization is now handled by local Ollama (see ollama_summarizer.py).
+# This keeps all Slack data on the local machine (Safeguard S6).
+from ollama_summarizer import summarize_briefing, check_ollama_available
 
 
 class DailyBriefing:
@@ -184,10 +191,10 @@ class DailyBriefing:
         output += f"- Period: {start_date} to {end_date}\n\n"
 
         if total_messages == 0:
-            output += "\n⚠️ **No important messages found in the specified channels during this period.**\n"
+            output += "\n**No important messages found in the specified channels during this period.**\n"
         else:
-            output += f"\n✅ **Ready for Claude Code to summarize!**\n"
-            output += f"📝 Please review the messages above and create a Daily Briefing summary.\n"
+            # CHANGED: No longer asks for Claude Code - summarization is automated via Ollama
+            output += f"\n**Ready for local AI summarization.**\n"
 
         return output
 
@@ -381,16 +388,21 @@ class DailyBriefing:
 
 async def main():
     """Main function."""
-    # Channel configuration - UPDATE THESE WITH YOUR CHANNEL IDs
-    channels = [
-        {"id": "CXXXXXXXXXX", "name": "your-channel-1"},
-        {"id": "CYYYYYYYYYY", "name": "your-channel-2"},
-        {"id": "CZZZZZZZZZZ", "name": "your-channel-3"},
-        {"id": "CAAAAAAAAAA", "name": "your-channel-4"},
-    ]
+    # CHANGED: Load channels from MONITORED_CHANNELS env var instead of hardcoding.
+    # Set it in .env as a JSON array, e.g.:
+    # MONITORED_CHANNELS=[{"id":"C04XXXXXX","name":"my-channel"}]
+    channels_env = os.environ.get("MONITORED_CHANNELS", "")
+    if channels_env:
+        channels = json.loads(channels_env)
+    else:
+        print("ERROR: MONITORED_CHANNELS environment variable not set.")
+        print('Set it as a JSON array, e.g.:')
+        print('  export MONITORED_CHANNELS=\'[{"id":"C04XXXXXX","name":"my-channel"}]\'')
+        print("Or add it to your .env file. See .env.example for format.")
+        sys.exit(1)
 
-    # Target channel for posting - UPDATE WITH YOUR CHANNEL ID
-    post_channel = "C0XXXXXXXXX"  # your-target-channel
+    # CHANGED: Load target channel from env var instead of hardcoding
+    post_channel = os.environ.get("BRIEFING_CHANNEL_ID", "")
 
     # Parse command line arguments
     hours_back = 24
@@ -416,7 +428,31 @@ async def main():
     print(f"{'=' * 80}")
     print(summary)
     print(f"{'=' * 80}")
-    print("\n✅ Daily briefing generated successfully!")
+
+    # ADDED: Automatic summarization via local Ollama (replaces manual Claude Code step)
+    # S6: All LLM processing happens locally - no data leaves the machine
+    # S8: PII sanitization applied inside summarize_briefing()
+    if check_ollama_available():
+        date_range = f"{(datetime.now() - timedelta(hours=hours_back)).strftime('%Y-%m-%d')} to {datetime.now().strftime('%Y-%m-%d')}"
+        print(f"\nSummarizing with local AI (Ollama)...")
+        ai_summary = summarize_briefing(summary, date_range)
+
+        summary_file = output_file.replace("briefing_", "briefing_summary_")
+        with open(summary_file, "w") as f:
+            f.write(ai_summary)
+        print(f"AI summary saved to: {summary_file}")
+
+        print(f"\n{'=' * 80}")
+        print(ai_summary)
+        print(f"{'=' * 80}")
+    else:
+        print(
+            "\nOllama not available - skipping AI summarization.\n"
+            "Raw messages saved. Start Ollama and run:\n"
+            f"  python ollama_summarizer.py {output_file}"
+        )
+
+    print("\nDaily briefing generated successfully!")
 
 
 if __name__ == "__main__":

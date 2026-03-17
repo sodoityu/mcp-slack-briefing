@@ -1,7 +1,13 @@
-# Sensitive configuration files
+# Sensitive configuration files (S7: never commit credentials)
 .mcp.json
+.briefing_thread.json
+.qa_listener.pid
 *.env
 .env*
+.env
+
+# ADDED: Summary output files (may contain sensitive channel data)
+briefing_summary_*.txt
 
 # Slack tokens and credentials
 *xoxc*

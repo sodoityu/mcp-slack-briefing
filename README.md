@@ -1,249 +1,254 @@
-# MCP Slack Daily Briefing System
+# Slack Daily Briefing Agent
 
-An intelligent daily briefing system that automatically monitors multiple Slack channels, extracts critical messages, and generates AI-powered summaries for SRE teams.
+An agentic daily briefing system that monitors Slack channels, generates AI-powered summaries using a **local LLM**, and answers follow-up questions — all without sending any data to external AI services.
 
-## 🌟 Overview
+Fork of [sodoityu/mcp-slack-briefing](https://github.com/sodoityu/mcp-slack-briefing), transformed into a fully automated, privacy-safe agentic system.
 
-This system uses the **Model Context Protocol (MCP)** to connect Claude AI with Slack, enabling automated collection and AI-powered summarization of important messages from multiple channels.
+## What it does
 
-### Key Features
+1. **Collects** messages from your Slack channels via MCP (Model Context Protocol)
+2. **Filters** for important messages (incidents, tickets, keywords, emojis)
+3. **Summarizes** using a local Ollama LLM — no data leaves your machine
+4. **Posts** the briefing to a Slack channel (header + threaded summary)
+5. **Answers follow-up questions** in the briefing thread using the local LLM
 
-- ✅ **MCP-based Architecture**: Uses standardized MCP protocol for AI-to-Slack communication
-- ✅ **Multi-Channel Monitoring**: Aggregates messages from multiple Slack channels
-- ✅ **Intelligent Filtering**: Automatically detects important messages using patterns and keywords
-- ✅ **AI-Powered Summarization**: Claude generates structured daily briefings
-- ✅ **Automated Scheduling**: Runs daily via systemd timers (or cron)
-- ✅ **Containerized Slack Server**: Uses Podman for secure, isolated execution
-- ✅ **Threaded Slack Posts**: Clean channel organization with header + threaded detail
-
-## 📚 Documentation
-
-- **[SLACK_BRIEFING_SHOWCASE.md](SLACK_BRIEFING_SHOWCASE.md)** - Complete technical showcase and architecture
-- **[SLACK_BRIEFING_SOURCE_CODE.md](SLACK_BRIEFING_SOURCE_CODE.md)** - Full source code documentation (51KB+)
-
-## 🚀 Quick Start
+## Quick Start
 
 ### Prerequisites
 
-- **Python 3.12+** with Poetry
-- **Podman** (container runtime)
-- **Slack workspace** with appropriate permissions
-- **Anthropic Claude API access** (via Claude Code)
+Choose your platform:
 
-### Installation
+**macOS (Apple Silicon M1/M2/M3, 16GB RAM)**
+```bash
+brew install python podman ollama
+```
 
-1. **Clone the repository**
-   ```bash
-   git clone https://github.com/sodoityu/mcp-slack-briefing.git
-   cd mcp-slack-briefing
-   ```
+**Linux (Fedora / RHEL)**
+```bash
+sudo dnf install python3 python3-pip podman
+curl -fsSL https://ollama.com/install.sh | sh
+```
 
-2. **Install Python dependencies**
-   ```bash
-   poetry install
-   # or
-   pip install mcp anthropic requests python-dotenv
-   ```
-
-3. **Pull the Slack MCP container**
-   ```bash
-   podman pull quay.io/redhat-ai-tools/slack-mcp:latest
-   ```
-
-4. **Configure Slack credentials**
-   - Copy `.mcp.json.example` to `.mcp.json`
-   - Add your Slack session tokens (xoxc/xoxd)
-   - Update channel IDs in `daily_briefing.py`
-
-5. **Set up automation** (optional)
-   ```bash
-   # Copy systemd timer files (see cronlearn.md for details)
-   cp systemd/* ~/.config/systemd/user/
-   systemctl --user enable --now daily-briefing.timer
-   ```
-
-## 📖 Usage
-
-### Manual Collection
+### 1. Clone and setup
 
 ```bash
-# Collect messages from the last 24 hours
-poetry run python daily_briefing.py
-
-# Custom time range (48 hours)
-poetry run python daily_briefing.py 48 briefing_custom.txt
+git clone https://github.com/archith-kadannapalli/mcp-slack-briefing.git
+cd mcp-slack-briefing
+chmod +x setup.sh && ./setup.sh
 ```
 
-### Generate Summary with Claude
+The setup script auto-detects your platform (macOS or Linux) and:
+- Creates a Python virtual environment
+- Installs Python dependencies
+- Pulls the `llama3.1:8b` AI model (~4.7GB, one-time)
+- Sets up Podman (initializes VM on macOS, native on Linux)
+- Pulls the Slack MCP container
+- Creates `.env` and `.mcp.json` config templates
 
-1. Run the collection script (or wait for automated run)
-2. Open Claude Code
-3. Say: "Create today's daily briefing"
-4. Review the AI-generated summary
-5. Approve posting to your target Slack channel
+### 2. Get your Slack tokens
 
-### Post to Slack
+Open **Slack in your browser** (not the desktop app), then open DevTools (F12):
+
+| Token | Where to find it |
+|-------|-----------------|
+| `xoxc-*` | Network tab > click any channel > find request to `api.slack.com` > look for `token` in request body |
+| `xoxd-*` | Application tab > Cookies > cookie named `d` |
+
+### 3. Configure
+
+**Edit `.mcp.json`** — add your Slack tokens:
+```json
+{
+  "mcpServers": {
+    "slack": {
+      "env": {
+        "SLACK_XOXC_TOKEN": "xoxc-YOUR-ACTUAL-TOKEN",
+        "SLACK_XOXD_TOKEN": "xoxd-YOUR-ACTUAL-TOKEN",
+        "SLACK_WORKSPACE_URL": "https://your-workspace.slack.com"
+      }
+    }
+  }
+}
+```
+
+**Edit `.env`** — add your channel IDs:
+```bash
+# Right-click channel in Slack > "View channel details" > ID at bottom
+BRIEFING_CHANNEL_ID=C04XXXXXXXX
+MONITORED_CHANNELS='[{"id":"C04XXXXXXXX","name":"your-channel"},{"id":"C01XXXXXXXX","name":"another-channel"}]'
+```
+
+### 4. Start Podman (platform-specific)
+
+**macOS:**
+```bash
+podman machine init    # first time only
+podman machine start
+```
+
+**Linux (Fedora/RHEL):**
+```bash
+# Podman runs natively, no setup needed
+# Verify with:
+podman info
+```
+
+### 5. Start Ollama
+
+**macOS:**
+```bash
+ollama serve &
+ollama pull llama3.1:8b    # first time only
+```
+
+**Linux:**
+```bash
+sudo systemctl start ollama
+sudo systemctl enable ollama    # auto-start on boot
+ollama pull llama3.1:8b         # first time only
+```
+
+### 6. Test
 
 ```bash
-# Post summary to Slack
-poetry run python post_summary_to_slack.py briefing_summary.txt 2026-03-16 2026-03-17 C04F0GWTD9B
+source venv/bin/activate
+set -a; source .env; set +a
+
+# Test collection (fetches messages from your channels)
+python daily_briefing.py 24 briefing_test.txt false
+
+# Test full pipeline (collect + summarize + post to Slack)
+./run_daily_briefing.sh
 ```
 
-## 🏗️ Architecture
+### 7. Start Q&A listener
 
-```
-┌─────────────────────────────────────────────────────────┐
-│                  Daily Briefing System                  │
-└─────────────────────────────────────────────────────────┘
+After a briefing is posted, start the listener to answer follow-up questions:
 
-Systemd Timer/Cron
-       │
-       ▼
-run_daily_briefing.sh
-       │
-       ▼
-daily_briefing.py ──► Slack MCP Server (Podman)
-       │                      │
-       │                      ▼
-       │               Slack API (4 channels)
-       ▼
-  briefing_YYYY-MM-DD.txt
-       │
-       ▼
-  Claude Code (Manual Review)
-       │
-       ▼
-  Claude API (Summarization)
-       │
-       ▼
-post_summary_to_slack.py ──► Slack Channel
-       │
-       ▼
-  📋 Daily Briefing Posted
+```bash
+./start_listener.sh          # foreground (Ctrl+C to stop)
+./start_listener.sh --bg     # background (logs to logs/qa_listener.log)
+./stop_listener.sh           # stop background listener
 ```
 
-## 🛠️ Technology Stack
+Reply in the briefing thread in Slack with any question — answered within 10 seconds.
 
-- **MCP Protocol**: Standardized AI-to-service communication
-- **Python 3.12**: Core scripting language
-- **Poetry**: Dependency management
-- **Podman**: Containerized Slack MCP server
-- **Anthropic Claude**: AI-powered summarization
-- **Systemd Timers**: Modern scheduling (alternative: cron)
-- **Bash**: Automation scripts
+### 8. Automate (optional)
 
-## 📂 File Structure
+```bash
+./setup_cron.sh
+```
+
+This sets up:
+- A **cron job** to run the daily briefing at your chosen time
+- A persistent service for the Q&A listener:
+  - **macOS:** launchd (auto-starts on login)
+  - **Linux:** systemd user service (auto-starts on boot, survives logout)
+
+## Architecture
+
+```
+Cron (daily)                    Your Machine
+     |                    (everything runs locally)
+     v
+daily_briefing.py -----> Slack MCP (Podman) -----> Slack API
+     |                                              |
+     v                                              v
+briefing_YYYY-MM-DD.txt              Monitored Channels
+     |
+     v
+ollama_summarizer.py --> Ollama (localhost:11434)
+     |
+     v
+briefing_summary_YYYY-MM-DD.txt
+     |
+     v
+post_summary_to_slack.py ---------> Slack Channel
+     |                               |
+     v                               v
+qa_listener.py (polls every 10s)   User replies in thread
+     |                               |
+     v                               v
+Ollama (generates answer) -------> Reply posted in thread
+```
+
+## Privacy and Security
+
+No Slack data ever leaves your machine. All AI processing happens locally via Ollama.
+
+| Safeguard | What it does |
+|-----------|-------------|
+| S1 - Channel allowlist | Only monitors channels you explicitly list in `.env` |
+| S2 - Context scoping | Q&A answers only reference the current briefing, not all of Slack |
+| S3/S4 - Access control | Channel search restricted to the allowlist |
+| S5 - Thread-only replies | Bot never posts top-level messages, only in-thread |
+| S6 - Local LLM only | Endpoint validated as localhost — external URLs blocked |
+| S7 - No hardcoded tokens | All credentials in `.env` / `.mcp.json`, both gitignored |
+| S8 - PII sanitization | Emails, phone numbers, IPs stripped before LLM sees them |
+
+## File Structure
 
 ```
 mcp-slack-briefing/
-├── README.md                          # This file
-├── SLACK_BRIEFING_SHOWCASE.md         # Technical showcase
-├── SLACK_BRIEFING_SOURCE_CODE.md      # Complete source code docs
-├── podmanlearn.md                     # Podman workflow guide
-├── cronlearn.md                       # Systemd timers guide
-├── .mcp.json.example                  # MCP configuration template
-├── daily_briefing.py                  # Main collection script
-├── post_summary_to_slack.py           # Slack posting script
-└── run_daily_briefing.sh              # Automation wrapper
+├── setup.sh                  # One-time setup (run first)
+├── run_daily_briefing.sh     # Full pipeline: collect + summarize + post
+├── start_listener.sh         # Start Q&A listener
+├── stop_listener.sh          # Stop Q&A listener
+├── setup_cron.sh             # Set up daily cron + persistent service
+├── daily_briefing.py         # Message collection from Slack via MCP
+├── ollama_summarizer.py      # Local Ollama summarization + Q&A
+├── post_summary_to_slack.py  # Post briefing to Slack channel
+├── qa_listener.py            # Poll briefing thread, answer questions
+├── safeguards.py             # Security checks (S1-S8)
+├── .env.example              # Environment config template
+├── .mcp.json.example         # MCP/Slack config template
+├── requirements.txt          # Python dependencies
+├── CLAUDE.md                 # AI assistant instructions
+├── AGENTIC_DESIGN.md         # Architecture and design document
+└── README.md                 # This file
 ```
 
-## ⚙️ Configuration
+## Platform Differences
 
-### Channel Configuration
+| Feature | macOS | Linux (Fedora/RHEL) |
+|---------|-------|---------------------|
+| Python install | `brew install python` | `sudo dnf install python3 python3-pip` |
+| Podman install | `brew install podman` | `sudo dnf install podman` (often pre-installed) |
+| Podman startup | `podman machine init && podman machine start` | Not needed (runs natively) |
+| Ollama install | `brew install ollama` | `curl -fsSL https://ollama.com/install.sh \| sh` |
+| Ollama startup | `ollama serve &` | `sudo systemctl start ollama` |
+| Q&A service | launchd (auto-start on login) | systemd user service (survives logout) |
+| Container arch | May show `linux/amd64` warning on ARM | Native architecture match |
 
-Edit `daily_briefing.py` to customize monitored channels:
+## Upgrading to OpenShift
 
-```python
-channels = [
-    {"id": "CXXXXXXXXXX", "name": "your-channel-1"},
-    {"id": "CYYYYYYYYYY", "name": "your-channel-2"},
-    # Add more channels...
-]
-```
+When ready to move from local Ollama to a shared OpenShift deployment:
 
-### Filtering Patterns
+1. Deploy Ollama/vLLM/RHOAI on your cluster
+2. Update two env vars in `.env`:
+   ```bash
+   OLLAMA_BASE_URL=https://llm.apps.your-cluster.internal
+   OLLAMA_MODEL=your-deployed-model
+   ```
+3. Update `ALLOWED_LLM_HOSTS` in `safeguards.py` to include your cluster hostname
+4. Everything else stays the same
 
-Customize the `filter_important_messages()` function:
+## Troubleshooting
 
-```python
-ticket_patterns = [
-    r'TICKET-\d+',      # Add your ticket patterns
-    r'PR #\d+',         # Pull requests
-]
+| Problem | Fix |
+|---------|-----|
+| `externally-managed-environment` error | Use the venv: `source venv/bin/activate` |
+| `json.decoder.JSONDecodeError` on `.env` | Wrap `MONITORED_CHANNELS` value in single quotes |
+| `json.decoder.JSONDecodeError` on `.mcp.json` | Check for double-double quotes around tokens |
+| `pydantic ValidationError` in output | Harmless warning from MCP server — pipeline continues |
+| `Ollama not available` | macOS: `ollama serve &` / Linux: `sudo systemctl start ollama` |
+| `Podman machine not running` (macOS) | `podman machine start` |
+| `No briefing thread found` | Run `./run_daily_briefing.sh` first, then start listener |
+| Q&A not detecting replies | Reply **in the briefing thread**, not as a new channel message |
+| `Poetry could not find pyproject.toml` | Use venv, not poetry: `source venv/bin/activate` |
+| Linux: `permission denied` on scripts | `chmod +x *.sh` |
+| Linux: Ollama won't start | `sudo systemctl enable --now ollama` |
 
-important_keywords = [
-    'urgent', 'critical', 'incident',  # Add keywords
-]
+## License
 
-important_emojis = ['🔥', '⚠️', '🚨']  # Add emojis
-```
-
-### Scheduling
-
-**Systemd Timer** (recommended):
-```bash
-# Edit timer schedule
-systemctl --user edit --full daily-briefing.timer
-
-# Change this line:
-OnCalendar=*-*-* 09:00:00  # Daily at 9:00 AM
-```
-
-**Cron** (alternative):
-```cron
-# Add to crontab
-0 9 * * * /path/to/run_daily_briefing.sh >> /path/to/logs/daily_briefing.log 2>&1
-```
-
-## 🔒 Security Notes
-
-- **Never commit `.mcp.json`** with real tokens (use `.mcp.json.example` as template)
-- Store tokens in environment variables or secure vault
-- Use `.gitignore` to exclude sensitive files
-- Rotate Slack tokens periodically
-- Review and sanitize messages before posting to public channels
-
-## 📊 Example Output
-
-```
-📋 Daily Briefing — 2026-03-16 to 2026-03-17
-
-🔴  Executive Summary
-System health stable with 3 critical incidents resolved. One ongoing upgrade
-issue requires monitoring. ARO HCP experiencing intermittent DNS delays.
-
-🔴 ITN-2026-xxxx: Customer cluster stuck in upgrading state (OHSS-xxxx)
-   Status: Engineering investigating CVO logs, RCA in progress
-
-🔵 ROSA Support
-- 12 new support cases opened (8 upgrades, 3 networking, 1 authentication)
-- Case escalation: SREP-xxxx (P1 cluster unavailable)
-
-📊 Statistics: 47 messages | 3 Critical | 8 Warnings
-```
-
-## 🤝 Contributing
-
-Contributions welcome! Please:
-1. Fork the repository
-2. Create a feature branch
-3. Test thoroughly
-4. Submit a pull request
-
-## 📝 License
-
-MIT License - feel free to use and modify for your own teams!
-
-## 🙏 Acknowledgments
-
-- **Red Hat AI Tools** - For the Slack MCP server container
-- **Anthropic** - For Claude AI and MCP protocol
-- **Podman Project** - For secure container runtime
-
-## 📧 Contact
-
-For questions or feedback, please open an issue on GitHub.
-
----
-
-**Built with ❤️ for SRE teams managing ROSA/ARO/HCP platforms**
+MIT License — based on [sodoityu/mcp-slack-briefing](https://github.com/sodoityu/mcp-slack-briefing)
