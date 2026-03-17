@@ -2,6 +2,8 @@
 #
 # setup.sh - One-time setup for the Slack Daily Briefing Agent
 #
+# Works on both macOS (Apple Silicon) and Linux (Fedora/RHEL)
+#
 # Run this after cloning the repo:
 #   chmod +x setup.sh && ./setup.sh
 #
@@ -11,8 +13,21 @@ set -e
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 cd "$SCRIPT_DIR"
 
+# Detect OS
+OS="$(uname)"
+if [ "$OS" = "Darwin" ]; then
+    PLATFORM="macOS"
+elif [ -f /etc/fedora-release ]; then
+    PLATFORM="Fedora"
+elif [ -f /etc/redhat-release ]; then
+    PLATFORM="RHEL"
+else
+    PLATFORM="Linux"
+fi
+
 echo "============================================="
 echo "  Slack Daily Briefing Agent - Setup"
+echo "  Platform: $PLATFORM"
 echo "============================================="
 echo ""
 
@@ -23,15 +38,31 @@ echo "[1/6] Checking prerequisites..."
 
 # Check Python
 if ! command -v python3 &>/dev/null; then
-    echo "ERROR: Python 3 not found. Install with: brew install python"
+    if [ "$OS" = "Darwin" ]; then
+        echo "ERROR: Python 3 not found. Install with: brew install python"
+    else
+        echo "ERROR: Python 3 not found. Install with: sudo dnf install python3"
+    fi
     exit 1
 fi
 PYTHON_VERSION=$(python3 --version 2>&1)
 echo "  Python: $PYTHON_VERSION"
 
+# Check python3-venv on Linux (needed for venv creation)
+if [ "$OS" = "Linux" ]; then
+    if ! python3 -m venv --help &>/dev/null 2>&1; then
+        echo "  Installing python3-venv..."
+        sudo dnf install -y python3-pip 2>/dev/null || sudo apt install -y python3-venv 2>/dev/null || true
+    fi
+fi
+
 # Check Podman
 if ! command -v podman &>/dev/null; then
-    echo "ERROR: Podman not found. Install with: brew install podman"
+    if [ "$OS" = "Darwin" ]; then
+        echo "ERROR: Podman not found. Install with: brew install podman"
+    else
+        echo "ERROR: Podman not found. Install with: sudo dnf install podman"
+    fi
     exit 1
 fi
 echo "  Podman: $(podman --version)"
@@ -42,9 +73,18 @@ if ! command -v ollama &>/dev/null; then
     echo ""
     read -p "  Install Ollama now? (y/n): " install_ollama
     if [ "$install_ollama" = "y" ]; then
-        brew install ollama
+        if [ "$OS" = "Darwin" ]; then
+            brew install ollama
+        else
+            # Linux: use the official install script
+            curl -fsSL https://ollama.com/install.sh | sh
+        fi
     else
-        echo "  Install later with: brew install ollama"
+        if [ "$OS" = "Darwin" ]; then
+            echo "  Install later with: brew install ollama"
+        else
+            echo "  Install later with: curl -fsSL https://ollama.com/install.sh | sh"
+        fi
     fi
 else
     echo "  Ollama: $(ollama --version 2>&1 | head -1)"
@@ -79,7 +119,12 @@ if command -v ollama &>/dev/null; then
     # Start Ollama if not running
     if ! curl -s http://localhost:11434/api/tags > /dev/null 2>&1; then
         echo "  Starting Ollama..."
-        ollama serve &>/dev/null &
+        if [ "$OS" = "Linux" ]; then
+            # On Linux, Ollama runs as a systemd service
+            sudo systemctl start ollama 2>/dev/null || ollama serve &>/dev/null &
+        else
+            ollama serve &>/dev/null &
+        fi
         sleep 3
     fi
 
@@ -100,8 +145,8 @@ echo ""
 # -------------------------------------------------------
 echo "[4/6] Setting up Slack MCP container..."
 
-# Initialize Podman machine if needed (macOS)
-if [ "$(uname)" = "Darwin" ]; then
+# macOS needs a Podman machine (VM). Linux runs containers natively.
+if [ "$OS" = "Darwin" ]; then
     if ! podman machine inspect 2>/dev/null | grep -q '"State"'; then
         echo "  Initializing Podman machine..."
         podman machine init
@@ -111,6 +156,7 @@ if [ "$(uname)" = "Darwin" ]; then
         podman machine start 2>/dev/null || true
     fi
 fi
+# Linux: no machine needed, Podman runs natively
 
 if podman image exists quay.io/redhat-ai-tools/slack-mcp 2>/dev/null; then
     echo "  Slack MCP image already pulled"
@@ -152,6 +198,8 @@ echo "[6/6] Setting file permissions..."
 chmod +x run_daily_briefing.sh
 chmod +x setup.sh
 chmod +x start_listener.sh 2>/dev/null || true
+chmod +x stop_listener.sh 2>/dev/null || true
+chmod +x setup_cron.sh 2>/dev/null || true
 echo "  Done"
 echo ""
 
@@ -185,6 +233,6 @@ echo ""
 echo "  5. Start Q&A listener:"
 echo "     ./start_listener.sh"
 echo ""
-echo "  6. Set up daily cron (optional):"
+echo "  6. Set up daily automation (optional):"
 echo "     ./setup_cron.sh"
 echo ""

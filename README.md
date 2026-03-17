@@ -16,32 +16,47 @@ Fork of [sodoityu/mcp-slack-briefing](https://github.com/sodoityu/mcp-slack-brie
 
 ### Prerequisites
 
-- macOS with Apple Silicon (M1/M2/M3) and 16GB RAM
-- [Homebrew](https://brew.sh) installed
+Choose your platform:
 
-### 1. Clone and run setup
+**macOS (Apple Silicon M1/M2/M3, 16GB RAM)**
+```bash
+brew install python podman ollama
+```
+
+**Linux (Fedora / RHEL)**
+```bash
+sudo dnf install python3 python3-pip podman
+curl -fsSL https://ollama.com/install.sh | sh
+```
+
+### 1. Clone and setup
 
 ```bash
-git clone <your-fork-url>
+git clone https://github.com/archith-kadannapalli/mcp-slack-briefing.git
 cd mcp-slack-briefing
 chmod +x setup.sh && ./setup.sh
 ```
 
-This installs Ollama, pulls the AI model, creates a Python venv, pulls the Slack MCP container, and creates config templates.
+The setup script auto-detects your platform (macOS or Linux) and:
+- Creates a Python virtual environment
+- Installs Python dependencies
+- Pulls the `llama3.1:8b` AI model (~4.7GB, one-time)
+- Sets up Podman (initializes VM on macOS, native on Linux)
+- Pulls the Slack MCP container
+- Creates `.env` and `.mcp.json` config templates
 
 ### 2. Get your Slack tokens
 
-You need two tokens from your Slack browser session:
+Open **Slack in your browser** (not the desktop app), then open DevTools (F12):
 
-| Token | How to get it |
-|-------|--------------|
-| `xoxc-*` | Open Slack in browser > DevTools (F12) > Network tab > find a request to `api.slack.com` > look for `token` in the request body |
-| `xoxd-*` | DevTools > Application > Cookies > find the cookie named `d` |
+| Token | Where to find it |
+|-------|-----------------|
+| `xoxc-*` | Network tab > click any channel > find request to `api.slack.com` > look for `token` in request body |
+| `xoxd-*` | Application tab > Cookies > cookie named `d` |
 
 ### 3. Configure
 
-Edit `.mcp.json` — add your Slack tokens:
-
+**Edit `.mcp.json`** — add your Slack tokens:
 ```json
 {
   "mcpServers": {
@@ -56,15 +71,44 @@ Edit `.mcp.json` — add your Slack tokens:
 }
 ```
 
-Edit `.env` — add your channel IDs:
-
+**Edit `.env`** — add your channel IDs:
 ```bash
-# Right-click a channel in Slack > "View channel details" > ID at bottom
+# Right-click channel in Slack > "View channel details" > ID at bottom
 BRIEFING_CHANNEL_ID=C04XXXXXXXX
 MONITORED_CHANNELS='[{"id":"C04XXXXXXXX","name":"your-channel"},{"id":"C01XXXXXXXX","name":"another-channel"}]'
 ```
 
-### 4. Test
+### 4. Start Podman (platform-specific)
+
+**macOS:**
+```bash
+podman machine init    # first time only
+podman machine start
+```
+
+**Linux (Fedora/RHEL):**
+```bash
+# Podman runs natively, no setup needed
+# Verify with:
+podman info
+```
+
+### 5. Start Ollama
+
+**macOS:**
+```bash
+ollama serve &
+ollama pull llama3.1:8b    # first time only
+```
+
+**Linux:**
+```bash
+sudo systemctl start ollama
+sudo systemctl enable ollama    # auto-start on boot
+ollama pull llama3.1:8b         # first time only
+```
+
+### 6. Test
 
 ```bash
 source venv/bin/activate
@@ -77,7 +121,7 @@ python daily_briefing.py 24 briefing_test.txt false
 ./run_daily_briefing.sh
 ```
 
-### 5. Start Q&A listener
+### 7. Start Q&A listener
 
 After a briefing is posted, start the listener to answer follow-up questions:
 
@@ -87,23 +131,25 @@ After a briefing is posted, start the listener to answer follow-up questions:
 ./stop_listener.sh           # stop background listener
 ```
 
-Then reply in the briefing thread in Slack with any question — the bot answers within 10 seconds.
+Reply in the briefing thread in Slack with any question — answered within 10 seconds.
 
-### 6. Automate (optional)
+### 8. Automate (optional)
 
 ```bash
 ./setup_cron.sh
 ```
 
 This sets up:
-- A **cron job** to run the briefing pipeline daily at your chosen time
-- A **launchd service** (macOS) to keep the Q&A listener running and auto-start on login
+- A **cron job** to run the daily briefing at your chosen time
+- A persistent service for the Q&A listener:
+  - **macOS:** launchd (auto-starts on login)
+  - **Linux:** systemd user service (auto-starts on boot, survives logout)
 
-## How it works
+## Architecture
 
 ```
 Cron (daily)                    Your Machine
-     |                    (everything runs here)
+     |                    (everything runs locally)
      v
 daily_briefing.py -----> Slack MCP (Podman) -----> Slack API
      |                                              |
@@ -126,7 +172,7 @@ qa_listener.py (polls every 10s)   User replies in thread
 Ollama (generates answer) -------> Reply posted in thread
 ```
 
-## Privacy & Security
+## Privacy and Security
 
 No Slack data ever leaves your machine. All AI processing happens locally via Ollama.
 
@@ -148,7 +194,7 @@ mcp-slack-briefing/
 ├── run_daily_briefing.sh     # Full pipeline: collect + summarize + post
 ├── start_listener.sh         # Start Q&A listener
 ├── stop_listener.sh          # Stop Q&A listener
-├── setup_cron.sh             # Set up daily cron + launchd service
+├── setup_cron.sh             # Set up daily cron + persistent service
 ├── daily_briefing.py         # Message collection from Slack via MCP
 ├── ollama_summarizer.py      # Local Ollama summarization + Q&A
 ├── post_summary_to_slack.py  # Post briefing to Slack channel
@@ -158,9 +204,21 @@ mcp-slack-briefing/
 ├── .mcp.json.example         # MCP/Slack config template
 ├── requirements.txt          # Python dependencies
 ├── CLAUDE.md                 # AI assistant instructions
-├── AGENTIC_DESIGN.md         # Design document
+├── AGENTIC_DESIGN.md         # Architecture and design document
 └── README.md                 # This file
 ```
+
+## Platform Differences
+
+| Feature | macOS | Linux (Fedora/RHEL) |
+|---------|-------|---------------------|
+| Python install | `brew install python` | `sudo dnf install python3 python3-pip` |
+| Podman install | `brew install podman` | `sudo dnf install podman` (often pre-installed) |
+| Podman startup | `podman machine init && podman machine start` | Not needed (runs natively) |
+| Ollama install | `brew install ollama` | `curl -fsSL https://ollama.com/install.sh \| sh` |
+| Ollama startup | `ollama serve &` | `sudo systemctl start ollama` |
+| Q&A service | launchd (auto-start on login) | systemd user service (survives logout) |
+| Container arch | May show `linux/amd64` warning on ARM | Native architecture match |
 
 ## Upgrading to OpenShift
 
@@ -174,6 +232,22 @@ When ready to move from local Ollama to a shared OpenShift deployment:
    ```
 3. Update `ALLOWED_LLM_HOSTS` in `safeguards.py` to include your cluster hostname
 4. Everything else stays the same
+
+## Troubleshooting
+
+| Problem | Fix |
+|---------|-----|
+| `externally-managed-environment` error | Use the venv: `source venv/bin/activate` |
+| `json.decoder.JSONDecodeError` on `.env` | Wrap `MONITORED_CHANNELS` value in single quotes |
+| `json.decoder.JSONDecodeError` on `.mcp.json` | Check for double-double quotes around tokens |
+| `pydantic ValidationError` in output | Harmless warning from MCP server — pipeline continues |
+| `Ollama not available` | macOS: `ollama serve &` / Linux: `sudo systemctl start ollama` |
+| `Podman machine not running` (macOS) | `podman machine start` |
+| `No briefing thread found` | Run `./run_daily_briefing.sh` first, then start listener |
+| Q&A not detecting replies | Reply **in the briefing thread**, not as a new channel message |
+| `Poetry could not find pyproject.toml` | Use venv, not poetry: `source venv/bin/activate` |
+| Linux: `permission denied` on scripts | `chmod +x *.sh` |
+| Linux: Ollama won't start | `sudo systemctl enable --now ollama` |
 
 ## License
 
