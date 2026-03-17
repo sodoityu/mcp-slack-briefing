@@ -215,12 +215,12 @@ System health stable with 3 critical incidents resolved. One ongoing upgrade
 issue requires monitoring. ARO HCP experiencing intermittent DNS delays.
 
 :small_orange_diamond: :fire: Hot Threads
-🔴 ITN-2026-12345: Customer cluster stuck in upgrading state (OHSS-67890)
+🔴 ITN-2026-xxxx: Customer cluster stuck in upgrading state (OHSS-xxxx)
    Status: Engineering investigating CVO logs, RCA in progress
 
 :small_orange_diamond: 🔵 ROSA Support
 - 12 new support cases opened (8 upgrades, 3 networking, 1 authentication)
-- Case escalation: SREP-4567 (P1 cluster unavailable)
+- Case escalation: SREP-xxxx (P1 cluster unavailable)
 
 📊 Statistics: 47 messages | 3 Critical | 8 Warnings
 ```
