@@ -354,12 +354,15 @@ echo "  Phase 8: Starting Q&A listener"
 echo "============================================="
 echo ""
 
-# Stop any existing listener
+# Stop ALL existing listeners (prevents duplicates on re-runs)
 if [ -f .qa_listener.pid ]; then
     OLD_PID=$(cat .qa_listener.pid)
     kill "$OLD_PID" 2>/dev/null || true
     rm -f .qa_listener.pid
 fi
+# Also kill any orphaned qa_listener processes
+pkill -f "python.*qa_listener.py" 2>/dev/null || true
+sleep 1
 
 # Start listener in background
 source venv/bin/activate
