@@ -44,7 +44,10 @@ async def post_briefing(channel_id: str, start_date: str, end_date: str, summary
             await session.initialize()
 
             # Create header
-            header = f"Daily Briefing -- {start_date} to {end_date}\nSummary ready! See thread for details."
+            header = (
+                f":clipboard: *Daily Briefing* — {start_date} to {end_date}\n"
+                f":white_check_mark: Summary ready! See thread for details :point_down:"
+            )
 
             print("Posting header message...")
 

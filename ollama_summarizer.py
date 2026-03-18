@@ -65,39 +65,99 @@ def check_ollama_available() -> bool:
 # ---------------------------------------------------------------------------
 
 SUMMARIZE_SYSTEM_PROMPT = """You are an SRE daily briefing summarizer. Your job is to take collected
-Slack messages from multiple channels and produce a clear, actionable daily briefing.
+Slack messages from multiple channels and produce a clear, actionable daily briefing
+formatted for Slack using mrkdwn syntax.
 
 Rules:
 - Be concise and factual. Do not invent information not present in the messages.
-- Structure the output with clear sections.
-- Highlight critical incidents and blockers prominently.
 - Include ticket/issue IDs when referenced in messages.
-- Categorize by severity: Critical (immediate action), Warning (monitor), Info (awareness).
+- Categorize by severity using these exact emoji:
+  :red_circle: = Critical (immediate action needed)
+  :large_yellow_circle: = Warning (needs monitoring)
+  :large_green_circle: = Info / Resolved (awareness only)
+- Always mention which channel (#channel-name) each item came from.
 - Do NOT include any email addresses, phone numbers, or personal contact information.
 - If something is unclear from the messages, say so rather than guessing.
+- Keep each bullet point to 1-2 lines max. Be specific, not vague.
+- Preserve any ticket URLs from the original messages (e.g., https://redhat.atlassian.net/browse/OHSS-xxxxx).
 
-Output format:
----
-Daily Briefing -- [DATE RANGE]
+You MUST follow this EXACT output format (copy the structure precisely):
 
-EXECUTIVE SUMMARY
-[2-3 sentence overview of the day's key events]
+:clipboard: *Daily Briefing* — [DATE RANGE]
 
-CRITICAL ISSUES (if any)
-- [Issue]: [Status] [Ticket ID if available]
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-WARNINGS (if any)
-- [Issue]: [Status]
+:mag: *Executive Summary*
+• [Key event 1 — which channel, what happened, current status]
+• [Key event 2 — which channel, what happened, current status]
+• [Key event 3 — which channel, what happened, current status]
 
-CHANNEL UPDATES
-[Channel Name]:
-- [Key point 1]
-- [Key point 2]
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-STATISTICS
-- Total messages reviewed: [N]
-- Critical: [N] | Warnings: [N] | Info: [N]
----"""
+:rotating_light: *Critical Issues*
+:red_circle: *[Short title]* — `[TICKET-ID]`
+> [1-2 sentence description. Which channel. Current status.]
+
+:red_circle: *[Short title]* — `[TICKET-ID]`
+> [1-2 sentence description. Which channel. Current status.]
+
+_(If no critical issues, write: :large_green_circle: No critical issues in this period.)_
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+:warning: *Warnings*
+:large_yellow_circle: *[Short title]* — `[TICKET-ID]`
+> [1-2 sentence description. Which channel.]
+
+_(If no warnings, write: :large_green_circle: No warnings in this period.)_
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+:speech_balloon: *Channel Updates*
+
+*#channel-name-1*
+• [Update point 1]
+• [Update point 2]
+
+*#channel-name-2*
+• [Update point 1]
+• [Update point 2]
+
+_(If a channel had no important messages, write: _No notable activity._)_
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+:bar_chart: *Statistics*
+• Messages reviewed: *[N]*
+• :red_circle: Critical: *[N]* | :large_yellow_circle: Warnings: *[N]* | :large_green_circle: Info: *[N]*"""
+
+
+def _fix_slack_emoji(text: str) -> str:
+    """Fix LLM emoji inconsistencies before posting to Slack.
+
+    LLMs sometimes write (red_circle) or **text** instead of the
+    correct Slack mrkdwn :red_circle: or *text*. This fixes those.
+    """
+    import re
+
+    # Fix (emoji_name) -> :emoji_name:
+    emoji_names = [
+        "red_circle", "large_yellow_circle", "large_green_circle",
+        "warning", "rotating_light", "clipboard", "mag",
+        "speech_balloon", "bar_chart", "white_check_mark",
+        "point_down", "file_folder", "thinking_face",
+    ]
+    for name in emoji_names:
+        # (red_circle) -> :red_circle:
+        text = text.replace(f"({name})", f":{name}:")
+        # Also fix cases like (🔴) that some models produce
+        # And fix doubled colons like ::red_circle::
+        text = text.replace(f"::{name}::", f":{name}:")
+
+    # Fix **bold** (markdown) -> *bold* (Slack mrkdwn)
+    text = re.sub(r'\*\*(.+?)\*\*', r'*\1*', text)
+
+    return text
 
 
 def summarize_briefing(raw_messages: str, date_range: str) -> str:
@@ -148,6 +208,8 @@ Please create a daily briefing summary following the format specified.
         )
 
         summary = response["message"]["content"]
+        # Fix LLM emoji inconsistencies — it sometimes writes (emoji) instead of :emoji:
+        summary = _fix_slack_emoji(summary)
         logger.info(f"Summarization complete: {len(summary)} chars generated")
         return summary
 
@@ -161,16 +223,20 @@ Please create a daily briefing summary following the format specified.
 # ---------------------------------------------------------------------------
 
 QA_SYSTEM_PROMPT = """You are an SRE assistant that answers follow-up questions about a daily briefing.
+Your answers are posted in Slack, so use Slack mrkdwn formatting.
 
 Rules:
 - ONLY use information from the provided context messages. Do not make up information.
-- S2: Always cite which channel or message your answer is based on.
-- If the answer is not in the provided context, say "I don't have enough information
-  from the monitored channels to answer that. You may want to check the channel directly."
-- Be concise and direct.
-- Do NOT include any email addresses, phone numbers, or personal contact information
-  even if they appear in the context.
-- Format ticket/issue IDs clearly so they're easy to reference."""
+- Always cite which channel (*#channel-name*) your answer is based on.
+- If the answer is not in the provided context, say:
+  ":thinking_face: I don't have enough information from the monitored channels to answer that. You may want to check the channel directly."
+- Be concise and direct. Use bullet points for multiple items.
+- Do NOT include any email addresses, phone numbers, or personal contact information.
+- Format ticket/issue IDs in backticks like `OHSS-51750`.
+- Use severity emoji where relevant:
+  :red_circle: = Critical | :large_yellow_circle: = Warning | :large_green_circle: = Resolved/OK
+- Bold key terms with *asterisks*.
+- Use > block quotes for direct references from messages."""
 
 
 def answer_followup(question: str, context_messages: str, channel_source: str) -> str:
@@ -224,10 +290,11 @@ Answer based ONLY on the context above. Cite which channel the information comes
         )
 
         answer = response["message"]["content"]
+        answer = _fix_slack_emoji(answer)
         logger.info(f"Q&A answer generated: {len(answer)} chars")
 
         # S2: Append source attribution (channel_source may contain Slack hyperlinks)
-        answer += f"\n\nSources: {channel_source}"
+        answer += f"\n\n━━━━━━━━━━━━━━━━━━━━\n:file_folder: _Sources: {channel_source}_"
 
         return answer
 

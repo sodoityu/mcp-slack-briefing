@@ -12,138 +12,63 @@ Fork of [sodoityu/mcp-slack-briefing](https://github.com/sodoityu/mcp-slack-brie
 4. **Posts** the briefing to a Slack channel (header + threaded summary)
 5. **Answers follow-up questions** in the briefing thread using the local LLM
 
-## Quick Start
-
-### Prerequisites
-
-Choose your platform:
-
-**macOS (Apple Silicon M1/M2/M3, 16GB RAM)**
-```bash
-brew install python podman ollama
-```
-
-**Linux (Fedora / RHEL)**
-```bash
-sudo dnf install python3 python3-pip podman
-curl -fsSL https://ollama.com/install.sh | sh
-```
-
-### 1. Clone and setup
+## Quick Start (one command)
 
 ```bash
 git clone https://github.com/archith-kadannapalli/mcp-slack-briefing.git
 cd mcp-slack-briefing
-chmod +x setup.sh && ./setup.sh
+chmod +x install.sh && ./install.sh
 ```
 
-The setup script auto-detects your platform (macOS or Linux) and:
-- Creates a Python virtual environment
-- Installs Python dependencies
-- Pulls the `llama3.1:8b` AI model (~4.7GB, one-time)
-- Sets up Podman (initializes VM on macOS, native on Linux)
-- Pulls the Slack MCP container
-- Creates `.env` and `.mcp.json` config templates
+That's it. The installer handles everything:
 
-### 2. Get your Slack tokens
+1. Installs dependencies (Python, Podman, Ollama) based on your platform
+2. Sets up Python venv and packages
+3. Starts Podman and pulls the Slack MCP container
+4. Starts Ollama and pulls the AI model
+5. **Prompts you for all config** (Slack tokens, channel IDs) — no file editing
+6. **Runs your first briefing immediately** and posts it to Slack
+7. Sets up a daily cron job (you pick the hour)
+8. Starts the Q&A listener in the background
+9. Installs auto-start service (launchd on macOS, systemd on Linux)
 
-Open **Slack in your browser** (not the desktop app), then open DevTools (F12):
+### What you need before running
 
-| Token | Where to find it |
-|-------|-----------------|
-| `xoxc-*` | Network tab > click any channel > find request to `api.slack.com` > look for `token` in request body |
-| `xoxd-*` | Application tab > Cookies > cookie named `d` |
+Before you run `install.sh`, have these ready:
 
-### 3. Configure
+1. **Slack tokens** — open Slack in your **browser** (not desktop app), open DevTools (F12):
+   - `xoxc-*` token: Network tab > click any channel > find request to `api.slack.com` > `token` in request body
+   - `xoxd-*` token: Application tab > Cookies > cookie named `d`
 
-**Edit `.mcp.json`** — add your Slack tokens:
-```json
-{
-  "mcpServers": {
-    "slack": {
-      "env": {
-        "SLACK_XOXC_TOKEN": "xoxc-YOUR-ACTUAL-TOKEN",
-        "SLACK_XOXD_TOKEN": "xoxd-YOUR-ACTUAL-TOKEN",
-        "SLACK_WORKSPACE_URL": "https://your-workspace.slack.com"
-      }
-    }
-  }
-}
-```
+2. **Channel IDs** — right-click a channel in Slack > "View channel details" > ID at bottom
+   - The channel where briefings should be posted
+   - The channels to monitor for messages
 
-**Edit `.env`** — add your channel IDs:
-```bash
-# Right-click channel in Slack > "View channel details" > ID at bottom
-BRIEFING_CHANNEL_ID=C04XXXXXXXX
-MONITORED_CHANNELS='[{"id":"C04XXXXXXXX","name":"your-channel"},{"id":"C01XXXXXXXX","name":"another-channel"}]'
-```
+### After install
 
-### 4. Start Podman (platform-specific)
+Go to Slack, find the briefing post, reply in the thread with a question — answered within 10 seconds.
 
-**macOS:**
-```bash
-podman machine init    # first time only
-podman machine start
-```
-
-**Linux (Fedora/RHEL):**
-```bash
-# Podman runs natively, no setup needed
-# Verify with:
-podman info
-```
-
-### 5. Start Ollama
-
-**macOS:**
-```bash
-ollama serve &
-ollama pull llama3.1:8b    # first time only
-```
-
-**Linux:**
-```bash
-sudo systemctl start ollama
-sudo systemctl enable ollama    # auto-start on boot
-ollama pull llama3.1:8b         # first time only
-```
-
-### 6. Test
+### Manual commands (if needed)
 
 ```bash
-source venv/bin/activate
-set -a; source .env; set +a
-
-# Test collection (fetches messages from your channels)
-python daily_briefing.py 24 briefing_test.txt false
-
-# Test full pipeline (collect + summarize + post to Slack)
-./run_daily_briefing.sh
+./run_daily_briefing.sh          # run briefing manually
+./start_listener.sh              # restart Q&A listener
+./stop_listener.sh               # stop Q&A listener
+tail -f logs/qa_listener.log     # Q&A listener logs
+tail -f logs/daily_briefing.log  # daily briefing logs
 ```
 
-### 7. Start Q&A listener
+### Advanced setup (separate steps)
 
-After a briefing is posted, start the listener to answer follow-up questions:
+If you prefer to run setup steps individually instead of the all-in-one installer:
 
 ```bash
-./start_listener.sh          # foreground (Ctrl+C to stop)
-./start_listener.sh --bg     # background (logs to logs/qa_listener.log)
-./stop_listener.sh           # stop background listener
+./setup.sh          # install deps + create config templates
+# edit .mcp.json and .env manually
+./run_daily_briefing.sh    # run pipeline
+./start_listener.sh        # start Q&A
+./setup_cron.sh            # set up automation
 ```
-
-Reply in the briefing thread in Slack with any question — answered within 10 seconds.
-
-### 8. Automate (optional)
-
-```bash
-./setup_cron.sh
-```
-
-This sets up:
-- A **cron job** to run the daily briefing at your chosen time
-- A persistent service for the Q&A listener:
-  - **macOS:** launchd (auto-starts on login)
-  - **Linux:** systemd user service (auto-starts on boot, survives logout)
 
 ## Architecture
 
