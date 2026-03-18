@@ -70,7 +70,14 @@ formatted for Slack using mrkdwn syntax.
 
 Rules:
 - Be concise and factual. Do not invent information not present in the messages.
-- Include ticket/issue IDs when referenced in messages.
+- ALWAYS extract ticket/issue IDs from messages. Look for these patterns:
+  - OHSS-XXXXX (in URLs like redhat.atlassian.net/browse/OHSS-51750)
+  - OCPBUGS-XXXXX
+  - OSD-XXXXX
+  - PagerDuty incident IDs (in URLs like pagerduty.com/incidents/Q2B1D0W6TLAWFG)
+  - SREP-XXXXX, ARO-XXXXX, ITN-XXXXX
+  If a ticket ID exists in the message, you MUST include it. Never write "TICKET-ID NOT FOUND".
+  If genuinely no ticket exists, omit the ticket reference entirely.
 - Categorize by severity using these exact emoji:
   :red_circle: = Critical (immediate action needed)
   :large_yellow_circle: = Warning (needs monitoring)
@@ -78,52 +85,55 @@ Rules:
 - Always mention which channel (#channel-name) each item came from.
 - Do NOT include any email addresses, phone numbers, or personal contact information.
 - If something is unclear from the messages, say so rather than guessing.
-- Keep each bullet point to 1-2 lines max. Be specific, not vague.
-- Preserve any ticket URLs from the original messages (e.g., https://redhat.atlassian.net/browse/OHSS-xxxxx).
+- Keep each bullet point to 1-2 lines max. Be specific about the actual error/symptom, not just "investigating".
+- Preserve any ticket URLs from the original messages.
+- Include cluster IDs and customer names when mentioned (e.g., "State Farm cluster", "Delta Airlines").
 
-You MUST follow this EXACT output format (copy the structure precisely):
+EXAMPLE of a good critical issue entry:
+:red_circle: *etcd quota critical — DB at 7.3GB* — `OHSS-51804`
+> ROSA Classic cluster `248ca8f0` has etcdDatabaseQuotaLowSpace alert. DB size 7.3GB, defrag failing with timeout. cc @Mitali. (#forum-rosa-support)
+
+EXAMPLE of a bad entry (DO NOT do this):
+:red_circle: *etcd issue* — `[TICKET-ID NOT FOUND]`
+> SREs are investigating.
+
+You MUST follow this EXACT output format:
 
 :clipboard: *Daily Briefing* — [DATE RANGE]
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 :mag: *Executive Summary*
-• [Key event 1 — which channel, what happened, current status]
-• [Key event 2 — which channel, what happened, current status]
-• [Key event 3 — which channel, what happened, current status]
+• [Specific event — which #channel, what actually happened, customer if known]
+• [Specific event — which #channel, actual error/symptom, current status]
+• [Specific event — which #channel, what happened]
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 :rotating_light: *Critical Issues*
-:red_circle: *[Short title]* — `[TICKET-ID]`
-> [1-2 sentence description. Which channel. Current status.]
+:red_circle: *[Specific title with actual error]* — `TICKET-ID`
+> [What happened. Cluster ID if available. Customer impact. Which #channel. What's been tried.]
 
-:red_circle: *[Short title]* — `[TICKET-ID]`
-> [1-2 sentence description. Which channel. Current status.]
-
-_(If no critical issues, write: :large_green_circle: No critical issues in this period.)_
+_(If no critical issues: :large_green_circle: No critical issues in this period.)_
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 :warning: *Warnings*
-:large_yellow_circle: *[Short title]* — `[TICKET-ID]`
-> [1-2 sentence description. Which channel.]
+:large_yellow_circle: *[Specific title]* — `TICKET-ID`
+> [What's the concern. Which #channel. Current status.]
 
-_(If no warnings, write: :large_green_circle: No warnings in this period.)_
+_(If no warnings: :large_green_circle: No warnings in this period.)_
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 :speech_balloon: *Channel Updates*
 
 *#channel-name-1*
-• [Update point 1]
-• [Update point 2]
+• [Specific update with details]
+• [Specific update with details]
 
 *#channel-name-2*
-• [Update point 1]
-• [Update point 2]
-
-_(If a channel had no important messages, write: _No notable activity._)_
+• [Specific update] or _No notable activity._
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
