@@ -132,6 +132,34 @@ _(If a channel had no important messages, write: _No notable activity._)_
 • :red_circle: Critical: *[N]* | :large_yellow_circle: Warnings: *[N]* | :large_green_circle: Info: *[N]*"""
 
 
+def _fix_slack_emoji(text: str) -> str:
+    """Fix LLM emoji inconsistencies before posting to Slack.
+
+    LLMs sometimes write (red_circle) or **text** instead of the
+    correct Slack mrkdwn :red_circle: or *text*. This fixes those.
+    """
+    import re
+
+    # Fix (emoji_name) -> :emoji_name:
+    emoji_names = [
+        "red_circle", "large_yellow_circle", "large_green_circle",
+        "warning", "rotating_light", "clipboard", "mag",
+        "speech_balloon", "bar_chart", "white_check_mark",
+        "point_down", "file_folder", "thinking_face",
+    ]
+    for name in emoji_names:
+        # (red_circle) -> :red_circle:
+        text = text.replace(f"({name})", f":{name}:")
+        # Also fix cases like (🔴) that some models produce
+        # And fix doubled colons like ::red_circle::
+        text = text.replace(f"::{name}::", f":{name}:")
+
+    # Fix **bold** (markdown) -> *bold* (Slack mrkdwn)
+    text = re.sub(r'\*\*(.+?)\*\*', r'*\1*', text)
+
+    return text
+
+
 def summarize_briefing(raw_messages: str, date_range: str) -> str:
     """Summarize collected Slack messages into a daily briefing.
 
@@ -180,6 +208,8 @@ Please create a daily briefing summary following the format specified.
         )
 
         summary = response["message"]["content"]
+        # Fix LLM emoji inconsistencies — it sometimes writes (emoji) instead of :emoji:
+        summary = _fix_slack_emoji(summary)
         logger.info(f"Summarization complete: {len(summary)} chars generated")
         return summary
 
@@ -260,6 +290,7 @@ Answer based ONLY on the context above. Cite which channel the information comes
         )
 
         answer = response["message"]["content"]
+        answer = _fix_slack_emoji(answer)
         logger.info(f"Q&A answer generated: {len(answer)} chars")
 
         # S2: Append source attribution (channel_source may contain Slack hyperlinks)
