@@ -196,13 +196,15 @@ if [ "$SKIP_CONFIG" != "true" ]; then
     echo "   find request to api.slack.com > look for 'token' in request body"
     echo "   (starts with xoxc-)"
     echo ""
-    read -p "Enter your xoxc token: " XOXC_TOKEN
+    read -s -p "Enter your xoxc token: " XOXC_TOKEN
+    echo " (hidden)"
 
     echo ""
     echo "2. XOXD token: DevTools > Application tab > Cookies >"
     echo "   find cookie named 'd' (starts with xoxd-)"
     echo ""
-    read -p "Enter your xoxd token: " XOXD_TOKEN
+    read -s -p "Enter your xoxd token: " XOXD_TOKEN
+    echo " (hidden)"
 
     echo ""
     echo "3. Workspace URL (e.g., https://mycompany.slack.com)"
