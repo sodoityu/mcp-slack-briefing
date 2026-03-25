@@ -11,6 +11,7 @@ import json
 import os
 import sys
 import re
+import requests
 from datetime import datetime, timedelta
 from typing import List, Dict, Any
 
@@ -91,6 +92,83 @@ class DailyBriefing:
 
         return messages
 
+    def fetch_thread_replies(self, channel_id: str, thread_ts: str) -> List[Dict]:
+        """Fetch all replies in a thread using direct Slack API.
+
+        ADDED: Bypasses MCP (which has pydantic parsing issues) and calls
+        Slack API directly using the same xoxc/xoxd tokens from .mcp.json.
+        Returns a list of reply dicts with user, text, and timestamp.
+        """
+        xoxc = self.slack_config["env"].get("SLACK_XOXC_TOKEN", "")
+        xoxd = self.slack_config["env"].get("SLACK_XOXD_TOKEN", "")
+
+        replies = []
+        try:
+            resp = requests.get(
+                "https://slack.com/api/conversations.replies",
+                params={
+                    "channel": channel_id,
+                    "ts": thread_ts,
+                    "limit": 100,
+                },
+                headers={"Authorization": f"Bearer {xoxc}"},
+                cookies={"d": xoxd},
+            )
+            if resp.ok:
+                data = resp.json()
+                if data.get("ok"):
+                    # Skip first message (parent), return only replies
+                    for msg in data.get("messages", [])[1:]:
+                        replies.append({
+                            "user": msg.get("user", "unknown"),
+                            "text": msg.get("text", ""),
+                            "ts": msg.get("ts", ""),
+                        })
+        except Exception as e:
+            print(f"    Warning: Could not fetch thread replies: {e}")
+
+        return replies
+
+    def resolve_username(self, user_id: str) -> str:
+        """Resolve a Slack user ID to a display name using direct API.
+
+        ADDED: Fetches user info to show real names instead of IDs.
+        Caches results to avoid repeated API calls.
+        """
+        if not hasattr(self, '_user_cache'):
+            self._user_cache = {}
+
+        if user_id in self._user_cache:
+            return self._user_cache[user_id]
+
+        xoxc = self.slack_config["env"].get("SLACK_XOXC_TOKEN", "")
+        xoxd = self.slack_config["env"].get("SLACK_XOXD_TOKEN", "")
+
+        try:
+            resp = requests.get(
+                "https://slack.com/api/users.info",
+                params={"user": user_id},
+                headers={"Authorization": f"Bearer {xoxc}"},
+                cookies={"d": xoxd},
+            )
+            if resp.ok:
+                data = resp.json()
+                if data.get("ok"):
+                    user = data["user"]
+                    name = (
+                        user.get("real_name")
+                        or user.get("profile", {}).get("display_name")
+                        or user.get("name")
+                        or user_id
+                    )
+                    self._user_cache[user_id] = name
+                    return name
+        except Exception:
+            pass
+
+        self._user_cache[user_id] = user_id
+        return user_id
+
     def filter_important_messages(self, messages: List[str]) -> List[str]:
         """Filter messages based on importance indicators."""
         # Ticket/Issue patterns
@@ -136,15 +214,21 @@ class DailyBriefing:
 
     def format_messages_for_review(
         self,
-        channels_data: Dict[str, List[str]],
+        channels_data: Dict[str, Any],
         start_date: str,
         end_date: str
     ) -> str:
-        """Format messages for Claude Code to review and summarize."""
-        output = f"# 📊 Collected Slack Messages for Review\n"
+        """Format messages with full thread context for AI review.
+
+        CHANGED: Now includes thread replies, usernames, timestamps, and
+        last update info for each message. This gives the LLM (and Q&A)
+        much richer context to answer specific questions like "who posted
+        about X" or "was the sev1 resolved".
+        """
+        output = f"# Collected Slack Messages for Review\n"
         output += f"**Period:** {start_date} to {end_date}\n\n"
 
-        # Add channel emoji mapping
+        # Channel emoji mapping
         channel_emojis = {
             'forum-rosa-support': '🔵',
             'team-rosa-hcp-platform': '🟣',
@@ -153,7 +237,11 @@ class DailyBriefing:
         }
 
         total_messages = 0
-        for channel_name, messages in channels_data.items():
+        total_threads_fetched = 0
+
+        for channel_name, channel_info in channels_data.items():
+            messages = channel_info["messages"]
+            channel_id = channel_info["channel_id"]
             emoji = channel_emojis.get(channel_name, '📢')
             total_messages += len(messages)
 
@@ -164,10 +252,9 @@ class DailyBriefing:
 
             if messages:
                 for i, msg in enumerate(messages, 1):
-                    # Add visual separator
                     output += f"───────────────────────────────────────────────────────────────\n"
 
-                    # Extract severity if present
+                    # Extract severity
                     severity = ""
                     if any(x in msg for x in ['critical', 'CRITICAL', '🔴', 'blocked', 'BLOCKED']):
                         severity = "🔴 "
@@ -179,21 +266,60 @@ class DailyBriefing:
                         severity = "⚠️ "
 
                     output += f"{severity}**Message {i}:**\n"
-                    output += f"{msg}\n\n"
+                    output += f"{msg}\n"
+
+                    # ADDED: Fetch thread replies for this message
+                    # Extract timestamp from message format: [1773784379.466249] @user: text
+                    ts_match = re.search(r'\[(\d+\.\d+)\]', msg)
+                    if ts_match:
+                        thread_ts = ts_match.group(1)
+                        replies = self.fetch_thread_replies(channel_id, thread_ts)
+
+                        if replies:
+                            total_threads_fetched += 1
+                            output += f"\n  **Thread Replies ({len(replies)}):**\n"
+                            for reply in replies:
+                                # Resolve user ID to name
+                                user_name = self.resolve_username(reply["user"])
+                                # Format timestamp
+                                try:
+                                    reply_time = datetime.fromtimestamp(
+                                        float(reply["ts"])
+                                    ).strftime("%H:%M")
+                                except (ValueError, OSError):
+                                    reply_time = "??:??"
+                                # Truncate very long replies to keep context manageable
+                                reply_text = reply["text"]
+                                if len(reply_text) > 500:
+                                    reply_text = reply_text[:500] + "... (truncated)"
+                                output += f"    @{user_name} ({reply_time}): {reply_text}\n"
+
+                            # Add last update info
+                            last_reply = replies[-1]
+                            last_user = self.resolve_username(last_reply["user"])
+                            try:
+                                last_time = datetime.fromtimestamp(
+                                    float(last_reply["ts"])
+                                ).strftime("%Y-%m-%d %H:%M")
+                            except (ValueError, OSError):
+                                last_time = "unknown"
+                            output += f"  **Last update:** @{last_user} at {last_time}\n"
+
+                    output += "\n"
             else:
                 output += f"_No important messages in this period._\n\n"
 
         output += f"\n{'═' * 80}\n"
-        output += f"**📈 Summary Statistics**\n"
+        output += f"**Summary Statistics**\n"
         output += f"{'═' * 80}\n"
         output += f"- Total channels monitored: {len(channels_data)}\n"
         output += f"- Total important messages: {total_messages}\n"
+        output += f"- Threads with replies fetched: {total_threads_fetched}\n"
         output += f"- Period: {start_date} to {end_date}\n\n"
 
         if total_messages == 0:
             output += "\n**No important messages found in the specified channels during this period.**\n"
         else:
-            # CHANGED: No longer asks for Claude Code - summarization is automated via Ollama
             output += f"\n**Ready for local AI summarization.**\n"
 
         return output
@@ -331,12 +457,19 @@ class DailyBriefing:
                 important = self.filter_important_messages(messages)
 
                 print(f"✅ {len(messages)} total, {len(important)} important")
-                all_channels_data[channel['name']] = important
+                # CHANGED: Store channel_id alongside messages so we can fetch thread replies
+                all_channels_data[channel['name']] = {
+                    "messages": important,
+                    "channel_id": channel['id'],
+                }
             except Exception as e:
                 print(f"❌ Error: {e}")
-                all_channels_data[channel['name']] = []
+                all_channels_data[channel['name']] = {
+                    "messages": [],
+                    "channel_id": channel['id'],
+                }
 
-        print(f"\n📝 Formatting messages for review...\n")
+        print(f"\n📝 Formatting messages and fetching thread replies...\n")
 
         # Format messages for Claude Code to review
         formatted_output = self.format_messages_for_review(

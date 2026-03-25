@@ -196,13 +196,15 @@ if [ "$SKIP_CONFIG" != "true" ]; then
     echo "   find request to api.slack.com > look for 'token' in request body"
     echo "   (starts with xoxc-)"
     echo ""
-    read -p "Enter your xoxc token: " XOXC_TOKEN
+    read -s -p "Enter your xoxc token: " XOXC_TOKEN
+    echo " (hidden)"
 
     echo ""
     echo "2. XOXD token: DevTools > Application tab > Cookies >"
     echo "   find cookie named 'd' (starts with xoxd-)"
     echo ""
-    read -p "Enter your xoxd token: " XOXD_TOKEN
+    read -s -p "Enter your xoxd token: " XOXD_TOKEN
+    echo " (hidden)"
 
     echo ""
     echo "3. Workspace URL (e.g., https://mycompany.slack.com)"
@@ -354,12 +356,15 @@ echo "  Phase 8: Starting Q&A listener"
 echo "============================================="
 echo ""
 
-# Stop any existing listener
+# Stop ALL existing listeners (prevents duplicates on re-runs)
 if [ -f .qa_listener.pid ]; then
     OLD_PID=$(cat .qa_listener.pid)
     kill "$OLD_PID" 2>/dev/null || true
     rm -f .qa_listener.pid
 fi
+# Also kill any orphaned qa_listener processes
+pkill -f "python.*qa_listener.py" 2>/dev/null || true
+sleep 1
 
 # Start listener in background
 source venv/bin/activate

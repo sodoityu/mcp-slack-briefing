@@ -95,18 +95,35 @@ def load_briefing_context() -> str:
     today = datetime.now().strftime("%Y-%m-%d")
     yesterday = (datetime.now() - timedelta(days=1)).strftime("%Y-%m-%d")
 
-    # Try summary first (AI-processed), then raw briefing
+    # CHANGED: Load BOTH the raw briefing (has full thread data with usernames,
+    # replies, timestamps) AND the summary. The raw file gives precise details
+    # for Q&A; the summary gives the structured overview.
+    context_parts = []
     for date_str in [today, yesterday]:
-        for prefix in ["briefing_summary_", "briefing_"]:
-            filepath = f"{prefix}{date_str}.txt"
-            try:
-                with open(filepath, "r") as f:
-                    content = f.read()
-                if content.strip():
-                    logger.info(f"S2: Loaded briefing context from {filepath}")
-                    return content
-            except FileNotFoundError:
-                continue
+        # Raw briefing first (has thread replies, usernames, timestamps)
+        raw_file = f"briefing_{date_str}.txt"
+        try:
+            with open(raw_file, "r") as f:
+                raw_content = f.read()
+            if raw_content.strip():
+                context_parts.append(f"=== RAW MESSAGES WITH THREAD REPLIES ===\n{raw_content}")
+                logger.info(f"S2: Loaded raw context from {raw_file}")
+        except FileNotFoundError:
+            pass
+
+        # Then the AI summary
+        summary_file = f"briefing_summary_{date_str}.txt"
+        try:
+            with open(summary_file, "r") as f:
+                summary_content = f.read()
+            if summary_content.strip():
+                context_parts.append(f"=== AI SUMMARY ===\n{summary_content}")
+                logger.info(f"S2: Loaded summary context from {summary_file}")
+        except FileNotFoundError:
+            pass
+
+        if context_parts:
+            return "\n\n".join(context_parts)
 
     logger.warning("No briefing file found for today or yesterday")
     return ""

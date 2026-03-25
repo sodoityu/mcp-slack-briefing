@@ -38,6 +38,15 @@ fi
 # Create logs dir
 mkdir -p logs
 
+# Stop any existing listeners to prevent duplicates
+if [ -f .qa_listener.pid ]; then
+    OLD_PID=$(cat .qa_listener.pid)
+    kill "$OLD_PID" 2>/dev/null || true
+    rm -f .qa_listener.pid
+fi
+pkill -f "python.*qa_listener.py" 2>/dev/null || true
+sleep 1
+
 if [ "$1" = "--bg" ]; then
     echo "Starting Q&A listener in background..."
     nohup python qa_listener.py >> logs/qa_listener.log 2>&1 &
